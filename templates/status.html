@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Live Progress · {{ app_name }}{% endblock %}
+{% block content %}
+{% if not state %}
+<div class="max-w-xl mx-auto text-center py-20">
+  <h1 class="text-2xl font-semibold mb-2">No run in progress</h1>
+  <p class="text-slate-400 mb-6">Start a Fianto run from the Configure page, or browse past runs.</p>
+  <a href="/" class="rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950">Configure & Launch</a>
+  <a href="/history" class="ml-2 rounded-lg border border-slate-700 px-5 py-2.5 text-sm">History Vault</a>
+</div>
+{% else %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-4">
+  <div>
+    <div class="text-xs uppercase tracking-wide text-slate-500">Run <span class="mono">{{ state.run_id }}</span></div>
+    <h1 id="headline" class="text-xl font-semibold mt-1">{{ state.headline }}</h1>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="status-pill" class="rounded-full px-3 py-1 text-xs font-semibold bg-slate-800 text-slate-300">{{ state.status }}</span>
+    <a href="/findings?run={{ state.run_id }}" class="rounded-lg border border-slate-700 px-4 py-2 text-sm hover:bg-slate-800">Findings Board</a>
+    <a id="report-btn" href="/history/{{ state.run_id }}" class="hidden rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">View Final Report →</a>
+  </div>
+</div>
+
+<div class="mb-6">
+  <div class="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+    <div id="progress" class="h-full bg-emerald-500 transition-all duration-500" style="width: 0%"></div>
+  </div>
+  <div id="progress-label" class="text-xs text-slate-500 mt-1"></div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6">
+  <div class="lg:col-span-2 rounded-xl border border-slate-800 bg-black/70 shadow-inner">
+    <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-800 text-xs text-slate-500">
+      <span class="h-2.5 w-2.5 rounded-full bg-rose-500/70"></span><span class="h-2.5 w-2.5 rounded-full bg-amber-400/70"></span><span class="h-2.5 w-2.5 rounded-full bg-emerald-500/70"></span>
+      <span class="ml-2 mono">fianto console</span>
+      <span id="conn" class="ml-auto">connecting…</span>
+    </div>
+    <pre id="console" class="mono text-[13px] leading-relaxed p-4 h-[60vh] overflow-auto scrollbar-thin whitespace-pre-wrap break-words"></pre>
+  </div>
+  <div class="space-y-3" id="projects"></div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if state %}
+<script>
+const COLORS = {info:'text-slate-300', cmd:'text-sky-300', ok:'text-emerald-400', warn:'text-amber-300', error:'text-rose-400', skip:'text-slate-500'};
+const con = document.getElementById('console');
+let seen = 0;
+function appendLog(e){
+  const line = document.createElement('div');
+  line.className = COLORS[e.level] || 'text-slate-300';
+  line.textContent = `[${e.t}] ${e.msg}`;
+  con.appendChild(line);
+  con.scrollTop = con.scrollHeight;
+}
+function render(s){
+  document.getElementById('headline').textContent = s.headline;
+  const pill = document.getElementById('status-pill');
+  pill.textContent = s.status;
+  pill.className = 'rounded-full px-3 py-1 text-xs font-semibold ' + ({running:'bg-sky-500/20 text-sky-300', done:'bg-emerald-500/20 text-emerald-300', failed:'bg-rose-500/20 text-rose-300'}[s.status] || 'bg-slate-800 text-slate-300');
+  const done = s.projects.filter(p => p.status === 'done').length;
+  const steps = s.total + 1; // +1 for the master report
+  const completed = done + (s.status === 'done' ? 1 : 0);
+  document.getElementById('progress').style.width = Math.round(100 * completed / steps) + '%';
+  document.getElementById('progress-label').textContent = `${done}/${s.total} projects complete` + (s.master_status ? ` · master report: ${s.master_status}` : '');
+  if (s.status === 'done' || (s.status === 'failed' && s.master_status)) document.getElementById('report-btn').classList.remove('hidden');
+  const box = document.getElementById('projects');
+  box.innerHTML = s.projects.map((p, i) => `
+    <div class="rounded-xl border ${p.status==='done'?'border-emerald-500/30':p.status==='queued'?'border-slate-800':'border-sky-500/40'} bg-slate-900/60 p-3 text-sm">
+      <div class="flex items-center justify-between gap-2">
+        <span class="font-medium truncate">${i+1}. ${p.name}</span>
+        <span class="text-xs ${p.status==='done'?'text-emerald-400':p.status==='queued'?'text-slate-500':'text-sky-300'}">${p.status}</span>
+      </div>
+      <div class="mono text-[11px] text-slate-500 truncate">${p.path}</div>
+      ${p.step ? `<div class="text-xs text-sky-300 mt-1">${p.step}</div>` : ''}
+      <div class="mt-2 flex flex-wrap gap-1">
+        ${p.scans.map(sc => `<span title="${sc.message||''}" class="rounded px-1.5 py-0.5 text-[11px] ${ {clean:'bg-emerald-500/15 text-emerald-300', findings:'bg-amber-500/15 text-amber-300', missing:'bg-slate-700 text-slate-400', error:'bg-rose-500/15 text-rose-300', timeout:'bg-rose-500/15 text-rose-300'}[sc.status] || 'bg-slate-800'}">${sc.tool}${sc.finding_count!=null?': '+sc.finding_count:''}</span>`).join('')}
+      </div>
+      ${p.finding_count!=null ? `<div class="text-xs text-slate-400 mt-2">${p.finding_count} scanner findings · agents: ${p.agent_findings||0}${p.verdicts&&p.verdicts.confirmed!=null ? ` · verified: ${p.verdicts.confirmed} ✓ / ${p.verdicts.false_positive} ✗ / ${p.verdicts.needs_review} ?` : ''}${p.patched ? ` · patched: ${p.patched}` : ''} · summary: ${p.summary_status||'pending'}</div>`:''}
+      ${p.surfaces ? `<div class="mt-1 flex gap-1">${p.surfaces.map(s=>`<span class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">${s}</span>`).join('')}</div>` : ''}
+    </div>`).join('');
+}
+function connectSSE(){
+  const es = new EventSource('/run/events');
+  es.addEventListener('log', ev => { appendLog(JSON.parse(ev.data)); seen++; });
+  es.addEventListener('state', ev => render(JSON.parse(ev.data)));
+  es.addEventListener('end', () => { es.close(); document.getElementById('conn').textContent = 'finished'; });
+  es.onopen = () => document.getElementById('conn').textContent = 'live (SSE)';
+  es.onerror = () => { es.close(); document.getElementById('conn').textContent = 'polling'; poll(); };
+}
+async function poll(){
+  try {
+    const r = await fetch('/run/state?since=' + seen);
+    const s = await r.json();
+    if (s) { (s.new_log || []).forEach(e => { appendLog(e); seen++; }); render(s); if (s.status === 'done' || s.status === 'failed') return; }
+  } catch (e) {}
+  setTimeout(poll, 1500);
+}
+connectSSE();
+</script>
+{% endif %}
+{% endblock %}

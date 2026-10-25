@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}Configure & Launch · {{ app_name }}
+<!-- Folder browser modal -->
+<div id="fs-modal" class="hidden fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
+  <div class="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl flex flex-col max-h-[85vh]">
+    <div class="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
+      <h3 class="font-semibold">Select repository folders</h3>
+      <button type="button" id="fs-close" class="text-slate-400 hover:text-white text-xl leading-none">×</button>
+    </div>
+    <div class="px-4 py-2 border-b border-slate-800 flex flex-wrap gap-1 items-center text-xs" id="fs-shortcuts"></div>
+    <div class="px-4 py-2 border-b border-slate-800 flex items-center gap-2">
+      <button type="button" id="fs-up" class="rounded border border-slate-700 px-2 py-1 text-sm hover:bg-slate-800" title="Parent folder">↑</button>
+      <input id="fs-path" class="mono flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" placeholder="/absolute/path">
+      <label class="text-xs text-slate-400 flex items-center gap-1"><input type="checkbox" id="fs-hidden" class="accent-emerald-500"> hidden</label>
+    </div>
+    <div id="fs-list" class="flex-1 overflow-y-auto scrollbar-thin divide-y divide-slate-800/60 text-sm"></div>
+    <div class="flex items-center justify-between gap-3 border-t border-slate-800 px-4 py-3">
+      <div class="flex items-center gap-2 text-xs">
+        <button type="button" id="fs-select-repos" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">Select all repos here</button>
+        <button type="button" id="fs-select-all" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">Select all</button>
+        <button type="button" id="fs-select-none" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">None</button>
+        <span id="fs-count" class="text-slate-400 ml-2">0 selected</span>
+      </div>
+      <button type="button" id="fs-add" class="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-40" disabled>Add to run</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const ta = document.querySelector('textarea[name=paths]');
+const msg = document.getElementById('picker-msg');
+function currentPaths(){ return ta.value.split('\n').map(s => s.trim()).filter(Boolean); }
+function addPaths(paths){
+  const have = new Set(currentPaths());
+  const added = paths.filter(p => !have.has(p));
+  ta.value = [...currentPaths(), ...added].join('\n');
+  msg.textContent = added.length ? `Added ${added.length} folder(s).` : 'Those folders are already in the list.';
+  msg.className = 'w-full text-xs ' + (added.length ? 'text-emerald-400' : 'text-amber-300');
+}
+document.getElementById('btn-clear').onclick = () => { ta.value = ''; msg.textContent = ''; };
+
+// --- native Finder picker (macOS)
+const nat = document.getElementById('btn-native');
+if (nat) nat.onclick = async () => {
+  nat.disabled = true; msg.className = 'w-full text-xs text-sky-300'; msg.textContent = 'Finder dialog is open on this Mac — it may be behind the browser window…';
+  try {
+    const r = await fetch('/fs/native', {method: 'POST'});
+    const d = await r.json();
+    if (d.error) { msg.className = 'w-full text-xs text-rose-400'; msg.textContent = d.error; }
+    else if (d.cancelled) { msg.textContent = ''; }
+    else addPaths(d.paths);
+  } catch (e) { msg.className = 'w-full text-xs text-rose-400'; msg.textContent = 'Picker failed: ' + e; }
+  nat.disabled = false;
+};
+
+// --- in-page folder browser
+const modal = document.getElementById('fs-modal'), list = document.getElementById('fs-list'), pathIn = document.getElementById('fs-path');
+const selected = new Map(); let cur = null, entries = [];
+const BADGE = {git:'bg-slate-700 text-slate-300', node:'bg-emerald-500/20 text-emerald-300', rust:'bg-orange-500/20 text-orange-300', python:'bg-sky-500/20 text-sky-300', pyproject:'bg-sky-500/20 text-sky-300', go:'bg-cyan-500/20 text-cyan-300'};
+function updateCount(){ document.getElementById('fs-count').textContent = `${selected.size} selected`; document.getElementById('fs-add').disabled = selected.size === 0; }
+async function go(path){
+  list.innerHTML = '<div class="p-4 text-slate-500">Loading…</div>';
+  const r = await fetch(`/fs/list?path=${encodeURIComponent(path || '')}&hidden=${document.getElementById('fs-hidden').checked ? 1 : 0}`);
+  const d = await r.json();
+  cur = d; entries = d.entries || []; pathIn.value = d.path;
+  document.getElementById('fs-up').disabled = !d.parent;
+  document.getElementById('fs-shortcuts').innerHTML = '<span class="text-slate-500 mr-1">Jump:</span>' + (d.shortcuts || []).map(s => `<button type="button" data-p="${s.path}" class="rounded bg-slate-800 px-2 py-0.5 hover:bg-slate-700 mono">${s.name}</button>`).join('');
+  document.querySelectorAll('#fs-shortcuts button').forEach(b => b.onclick = () => go(b.dataset.p));
+  if (d.error) { list.innerHTML = `<div class="p-4 text-rose-400">${d.error}</div>`; return; }
+  const rows = [];
+  if (d.this_is_repo) rows.push(`<label class="flex items-center gap-3 px-4 py-2 bg-emerald-500/5 cursor-pointer"><input type="checkbox" data-p="${d.path}" class="fs-cb accent-emerald-500" ${selected.has(d.path) ? 'checked' : ''}><span class="text-emerald-300">this folder</span><span class="mono text-xs text-slate-500 truncate">${d.path}</span></label>`);
+  if (!entries.length) rows.push('<div class="p-4 text-slate-500">No subfolders.</div>');
+  for (const e of entries) rows.push(`
+    <div class="flex items-center gap-3 px-4 py-1.5 hover:bg-slate-800/60">
+      <input type="checkbox" data-p="${e.path}" class="fs-cb accent-emerald-500" ${selected.has(e.path) ? 'checked' : ''}>
+      <button type="button" data-p="${e.path}" class="fs-open flex-1 text-left truncate ${e.is_repo ? 'text-slate-100' : 'text-slate-400'}">${e.name}<span class="text-slate-600"> /</span></button>
+      <span class="flex gap-1">${e.markers.map(m => `<span class="rounded px-1.5 py-0.5 text-[10px] ${BADGE[m] || 'bg-slate-700'}">${m}</span>`).join('')}</span>
+      <button type="button" data-p="${e.path}" class="fs-open text-slate-500 hover:text-white px-1" title="Open">›</button>
+    </div>`);
+  list.innerHTML = rows.join('');
+  list.querySelectorAll('.fs-open').forEach(b => b.onclick = () => go(b.dataset.p));
+  list.querySelectorAll('.fs-cb').forEach(cb => cb.onchange = () => { cb.checked ? selected.set(cb.dataset.p, true) : selected.delete(cb.dataset.p); updateCount(); });
+  updateCount();
+}
+function setAll(pred){ entries.forEach(e => pred(e) ? selected.set(e.path, true) : selected.delete(e.path)); go(cur.path); }
+document.getElementById('btn-browse').onclick = () => { modal.classList.remove('hidden'); go(cur ? cur.path : ''); };
+document.getElementById('fs-close').onclick = () => modal.classList.add('hidden');
+modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') modal.classList.add('hidden'); });
+document.getElementById('fs-up').onclick = () => cur && cur.parent && go(cur.parent);
+document.getElementById('fs-hidden').onchange = () => cur && go(cur.path);
+pathIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(pathIn.value); } });
+document.getElementById('fs-select-repos').onclick = () => setAll(e => e.is_repo);
+document.getElementById('fs-select-all').onclick = () => setAll(() => true);
+document.getElementById('fs-select-none').onclick = () => { selected.clear(); go(cur.path); };
+document.getElementById('fs-add').onclick = () => { addPaths([...selected.keys()]); selected.clear(); modal.classList.add('hidden'); };
+</script>
+{% endblock %}
+{% block content %}
+<div class="grid lg:grid-cols-3 gap-8">
+  <section class="lg:col-span-2">
+    <h1 class="text-2xl font-semibold mb-1">Configure & Launch</h1>
+    <p class="text-slate-400 text-sm mb-6">Paste absolute paths to local repositories, one per line. {{ tagline }} Repos are processed one by one; each gets a verified triage with patches, then a master report.</p>
+
+    {% if error %}
+    <div class="mb-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 whitespace-pre-line">{{ error }}</div>
+    {% endif %}
+    {% if running %}
+    <div class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+      A run is already in progress. <a class="underline" href="/run/status">Open the live tracker →</a>
+    </div>
+    {% endif %}
+
+    <form method="post" action="/run" class="space-y-4">
+      <label class="block">
+        <span class="text-sm font-medium text-slate-300">Repository paths</span>
+        <textarea name="paths" rows="10" required placeholder="/Users/you/code/backend-api&#10;/Users/you/code/my-mobile-app&#10;/Users/you/code/rust-service"
+          class="mono mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/60">{{ paths or '' }}</textarea>
+      </label>
+      <div class="flex flex-wrap items-center gap-2 -mt-1">
+        {% if native_picker %}
+        <button type="button" id="btn-native" class="rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm hover:bg-slate-700 flex items-center gap-2">
+          <span>📂</span> Choose folders… <span class="text-[11px] text-slate-400">Finder, ⌘-click for many</span>
+        </button>
+        {% endif %}
+        <button type="button" id="btn-browse" class="rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm hover:bg-slate-700 flex items-center gap-2">
+          <span>🗂</span> Browse & multi-select
+        </button>
+        <button type="button" id="btn-clear" class="ml-auto text-xs text-slate-500 hover:text-slate-300">clear list</button>
+        <span id="picker-msg" class="w-full text-xs text-amber-300 empty:hidden"></span>
+      </div>
+      <div class="grid sm:grid-cols-2 gap-4 rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+        <label class="block text-sm">
+          <span class="font-medium text-slate-300">Depth</span>
+          <select name="depth" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm">
+            {% for d in depths %}<option value="{{ d }}" {% if d == depth_default %}selected{% endif %}>
+              {{ d }} — {{ {'scan': 'scanners + Claude reports only', 'review': '+ surface agents read the code', 'verify': '+ adversarial verifier (recommended)', 'patch': '+ auto-patch confirmed findings in git worktrees'}[d] }}
+            </option>{% endfor %}
+          </select>
+        </label>
+        <div class="text-sm">
+          <span class="font-medium text-slate-300">Surfaces</span>
+          <div class="mt-1 flex flex-wrap gap-3">
+            {% for s in surfaces %}<label class="flex items-center gap-1.5"><input type="checkbox" name="surfaces" value="{{ s }}" class="accent-emerald-500"> {{ s }}</label>{% endfor %}
+          </div>
+          <span class="block mt-1 text-xs text-slate-500">Leave all unchecked to auto-detect per repo (infra always runs).</span>
+        </div>
+      </div>
+      <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-medium text-slate-300">Models for this run</span>
+          <a href="/settings" class="text-xs text-emerald-400 hover:underline">manage providers & models →</a>
+        </div>
+        <div class="mt-2 grid sm:grid-cols-2 gap-3">
+          {% for st, desc in stages.items() %}
+          <label class="block text-xs text-slate-400">{{ desc }}
+            <select name="model_{{ st }}" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100">
+              {% for m in settings.models if m.enabled %}<option value="{{ m.key }}" {% if settings.stages[st] == m.key %}selected{% endif %}>{{ m.label }} — {{ m.model }} ({{ m.provider }})</option>{% endfor %}
+            </select>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button type="submit" {% if running %}disabled{% endif %}
+          class="rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed">
+          Start run
+        </button>
+        <span class="text-xs text-slate-500">Scanners run with a {{ timeout_min }} min timeout each. Non-zero exit codes are expected and handled.</span>
+      </div>
+    </form>
+
+    <div class="mt-10">
+      <h2 class="text-sm font-semibold text-slate-300 mb-2">What runs per project</h2>
+      <ul class="text-sm text-slate-400 space-y-1 mono">
+        <li><span class="text-emerald-400">always</span> trufflehog git file://&lt;path&gt; --json</li>
+        <li><span class="text-emerald-400">always</span> semgrep scan --config=auto --json &lt;path&gt;</li>
+        <li><span class="text-sky-400">package.json</span> npm audit --json</li>
+        <li><span class="text-sky-400">Cargo.toml</span> cargo audit --json</li>
+        <li><span class="text-sky-400">requirements.txt</span> pip-audit -r requirements.txt --json</li>
+      </ul>
+    </div>
+  </section>
+
+  <aside class="space-y-6">
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <h2 class="text-sm font-semibold mb-3">Local environment</h2>
+      <ul class="space-y-2">
+        {% for t in tools %}
+        <li class="flex items-start gap-3 text-sm">
+          <span class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs
+            {% if t.installed %}bg-emerald-500/20 text-emerald-400{% elif t.required %}bg-rose-500/20 text-rose-400{% else %}bg-slate-700 text-slate-400{% endif %}">
+            {% if t.installed %}✓{% else %}✕{% endif %}
+          </span>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="mono font-medium">{{ t.name }}</span>
+              {% if t.required %}<span class="text-[10px] uppercase tracking-wide text-slate-500">required</span>{% endif %}
+            </div>
+            <div class="text-xs text-slate-400">{{ t.purpose }}</div>
+            {% if t.installed %}
+              <div class="text-xs text-slate-500 mono truncate">{{ t.path }}</div>
+            {% else %}
+              <div class="text-xs text-amber-300/80 mono">not found · {{ t.install }}</div>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold">Models</h2>
+        <a href="/settings" class="text-xs text-emerald-400 hover:underline">Settings →</a>
+      </div>
+      <ul class="space-y-1.5 text-xs">
+        {% for st, desc in stages.items() %}{% set mk = settings.stages[st] %}{% set m = (settings.models | selectattr('key', 'equalto', mk) | list | first) %}
+        <li class="flex items-baseline justify-between gap-2">
+          <span class="text-slate-400 shrink-0">{{ {'report': 'Reports', 'agent': 'Agents', 'verify': 'Verifier', 'patch': 'Patcher'}[st] }}</span>
+          <span class="mono text-slate-200 truncate" title="{{ mk }}">{{ m.model if m else '—' }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <div class="mt-3 pt-3 border-t border-slate-800 space-y-1 text-xs">
+        {% for p in settings.providers %}
+        <div class="flex items-center gap-2">
+          {% set has_key = p.api_key_hint or (p.id == 'anthropic-default' and api_key_set) or p.type in ['anthropic_bedrock', 'anthropic_vertex'] %}
+          <span class="{% if has_key %}text-emerald-400{% else %}text-amber-300{% endif %}">{% if has_key %}✓{% else %}✕{% endif %}</span>
+          <span class="text-slate-300 truncate">{{ p.name }}</span>
+          <span class="text-slate-500 ml-auto shrink-0">{% if p.api_key_hint %}key set{% elif p.id == 'anthropic-default' %}{% if api_key_set %}key from .env{% else %}no key{% endif %}{% elif p.type in ['anthropic_bedrock', 'anthropic_vertex'] %}env credentials{% else %}no key{% endif %}</span>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="mt-2 text-[11px] text-slate-500">Defaults for new runs; the selectors on the left override them per run.</p>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm">
+      <h2 class="font-semibold mb-1">History</h2>
+      <p class="text-slate-400">{{ run_count }} past run(s) on disk. <a class="text-emerald-400 hover:underline" href="/history">Open the vault →</a></p>
+    </div>
+  </aside>
+</div>
+{% endblock %}

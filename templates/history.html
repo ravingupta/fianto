@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}History Vault · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="flex items-end justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold">Past Scans History Vault</h1>
+    <p class="text-slate-400 text-sm">Every run found under <span class="mono">{{ data_dir }}</span>, newest first.</p>
+  </div>
+  <a href="/" class="rounded-lg border border-slate-700 px-4 py-2 text-sm hover:bg-slate-800">New run</a>
+</div>
+{% if not runs %}
+<div class="rounded-xl border border-dashed border-slate-700 p-12 text-center text-slate-400">No runs yet. <a href="/" class="text-emerald-400 hover:underline">Start the first run →</a></div>
+{% else %}
+<div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+  {% for r in runs %}
+  <a href="/history/{{ r.run_id }}" class="group rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-emerald-500/50 hover:bg-slate-900 transition">
+    <div class="flex items-start justify-between gap-2">
+      <div>
+        <div class="text-xs uppercase tracking-wide text-slate-500">Run</div>
+        <div class="font-semibold">{{ r.label }}</div>
+      </div>
+      <span class="rounded-full px-2 py-0.5 text-[11px] font-semibold
+        {% if r.status == 'done' %}bg-emerald-500/15 text-emerald-300{% elif r.status in ('running','queued') %}bg-sky-500/15 text-sky-300{% elif r.status == 'failed' %}bg-rose-500/15 text-rose-300{% else %}bg-slate-800 text-slate-400{% endif %}">{{ r.status }}</span>
+    </div>
+    <div class="mono text-[11px] text-slate-500 mt-1">{{ r.run_id }}</div>
+    <div class="mt-3 flex flex-wrap gap-1">
+      {% for p in r.projects %}<span class="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-300">{{ p }}</span>{% endfor %}
+    </div>
+    <div class="mt-3 flex items-center justify-between text-xs text-slate-400">
+      <span>{{ r.projects|length }} project(s){% if r.totals.total is defined %} · {{ r.totals.total }} findings{% endif %}</span>
+      <span class="{% if r.has_master %}text-emerald-400{% else %}text-amber-300{% endif %}">{% if r.has_master %}master report ✓{% else %}no master report{% endif %}</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

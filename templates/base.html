@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body class="h-full bg-slate-950 text-slate-100 antialiased">
+<div class="min-h-full flex flex-col">
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+      <a href="/" class="flex items-center gap-2 font-semibold tracking-tight">
+        <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-500/20 text-emerald-400">⛨</span>
+        <span>{{ app_name }}</span>
+      </a>
+      <nav class="flex items-center gap-1 text-sm">
+        {% set nav = [('/', 'Configure & Launch'), ('/run/status', 'Live Progress'), ('/findings', 'Findings Board'), ('/history', 'History Vault'), ('/settings', 'Settings')] %}
+        {% for href, label in nav %}
+        <a href="{{ href }}" class="px-3 py-1.5 rounded-md hover:bg-slate-800 {% if active == href %}bg-slate-800 text-white{% else %}text-slate-300{% endif %}">{{ label }}</a>
+        {% endfor %}
+      </nav>
+    </div>
+  </header>
+  <main class="flex-1 {% block main_class %}max-w-7xl w-full mx-auto px-4 py-8{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="border-t border-slate-800 text-xs text-slate-500 px-4 py-3 text-center">
+    {{ app_name }} · local only · data dir <span class="mono">{{ data_dir }}</span> · <a href="/settings" class="hover:text-slate-300">models & providers</a>
+  </footer>
+</div>
+{% block scripts %}{% endblock %}
+</body>
+</html>

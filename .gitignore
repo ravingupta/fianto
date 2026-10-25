@@ -1,0 +1,14 @@
+# local settings and secrets: never committed
+.env
+.env.*
+!.env.example
+# runs, findings database, worktrees, provider keys (data/settings.json)
+data/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+*.pem
+*.key

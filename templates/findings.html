@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Findings Board · {{ app_name }}{% endblock %}
+{% block content %}
+{% set SEV = {'critical':'bg-rose-500/20 text-rose-300','high':'bg-orange-500/20 text-orange-300','medium':'bg-amber-500/20 text-amber-200','low':'bg-sky-500/20 text-sky-300','info':'bg-slate-700 text-slate-300'} %}
+{% set ST = {'new':'bg-slate-700 text-slate-200','needs_review':'bg-amber-500/20 text-amber-200','confirmed':'bg-rose-500/20 text-rose-200','false_positive':'bg-slate-800 text-slate-500','accepted_risk':'bg-slate-800 text-slate-500','fixed':'bg-emerald-500/20 text-emerald-300'} %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-5">
+  <div>
+    <h1 class="text-2xl font-semibold">Findings Board</h1>
+    <p class="text-slate-400 text-sm">Deduplicated across runs by fingerprint. False positives and accepted risks stay suppressed in future runs.</p>
+  </div>
+  <div class="flex gap-2 text-sm">
+    {% for s in ['critical','high','medium','low'] %}<span class="rounded-lg px-3 py-1.5 {{ SEV[s] }}">{{ stats.by_severity.get(s, 0) }} {{ s }}</span>{% endfor %}
+    <span class="rounded-lg px-3 py-1.5 bg-slate-800 text-slate-300">{{ stats.total }} total</span>
+  </div>
+</div>
+
+<form method="get" class="grid md:grid-cols-7 gap-2 mb-4 text-sm">
+  <select name="run" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5"><option value="">all runs</option>{% for r in facets.runs %}<option value="{{ r }}" {% if filters.run == r %}selected{% endif %}>{{ r }}</option>{% endfor %}</select>
+  <select name="project" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5"><option value="">all projects</option>{% for p in facets.projects %}<option value="{{ p }}" {% if filters.project == p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select>
+  <select name="status" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5"><option value="">any status</option>{% for s in statuses %}<option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s }} ({{ stats.by_status.get(s, 0) }})</option>{% endfor %}</select>
+  <select name="surface" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5"><option value="">any surface</option>{% for s in facets.surfaces %}<option value="{{ s }}" {% if filters.surface == s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+  <select name="severity" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5"><option value="">any severity</option>{% for s in ['critical','high','medium','low','info'] %}<option value="{{ s }}" {% if filters.severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+  <select name="source" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5"><option value="">any source</option>{% for s in ['agent','semgrep','trufflehog','npm-audit','pip-audit','cargo-audit'] %}<option value="{{ s }}" {% if filters.source == s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+  <div class="flex items-center gap-2">
+    <label class="flex items-center gap-1 text-xs text-slate-400"><input type="checkbox" name="hide_suppressed" value="1" {% if filters.hide_suppressed %}checked{% endif %} class="accent-emerald-500"> hide suppressed</label>
+    <button class="rounded-lg bg-slate-800 px-3 py-1.5 hover:bg-slate-700">Filter</button>
+  </div>
+</form>
+
+<form method="post" action="/findings/bulk" id="bulk">
+  <input type="hidden" name="back" value="{{ request.url }}">
+  <div class="flex items-center gap-2 mb-2 text-sm">
+    <span class="text-slate-400"><span id="sel-count">0</span> selected →</span>
+    <select name="status" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+    <button class="rounded-lg border border-slate-700 px-3 py-1 hover:bg-slate-800">Apply to selected</button>
+  </div>
+  <div class="overflow-x-auto rounded-xl border border-slate-800">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
+        <tr><th class="p-2"><input type="checkbox" id="sel-all" class="accent-emerald-500"></th><th class="p-2 text-left">Sev</th><th class="p-2 text-left">Finding</th><th class="p-2 text-left">Project</th><th class="p-2 text-left">Surface</th><th class="p-2 text-left">Source</th><th class="p-2 text-left">Conf</th><th class="p-2 text-left">Status</th><th class="p-2 text-left">Patch</th></tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/70">
+      {% for r in rows %}
+        <tr class="hover:bg-slate-900/60 {% if r.status in ['false_positive','accepted_risk'] %}opacity-50{% endif %}">
+          <td class="p-2"><input type="checkbox" name="fps" value="{{ r.fingerprint }}" class="sel accent-emerald-500"></td>
+          <td class="p-2"><span class="rounded px-1.5 py-0.5 text-[11px] font-semibold {{ SEV[r.severity] }}">{{ r.severity }}</span></td>
+          <td class="p-2 max-w-md"><a href="/findings/{{ r.fingerprint }}" class="font-medium hover:text-emerald-300">{{ r.title }}</a><div class="mono text-[11px] text-slate-500 truncate">{{ r.location or r.file }}</div></td>
+          <td class="p-2 text-slate-300">{{ r.project }}</td>
+          <td class="p-2 text-slate-400">{{ r.surface }}</td>
+          <td class="p-2 text-slate-400">{{ r.tool }}</td>
+          <td class="p-2 text-slate-400">{{ '%.0f'|format(r.confidence * 100) }}%</td>
+          <td class="p-2"><span class="rounded px-1.5 py-0.5 text-[11px] {{ ST[r.status] }}">{{ r.status }}</span>{% if r.verification %}<span title="{{ r.verification.reasoning|e }}" class="ml-1 text-[10px] text-slate-500">verified</span>{% endif %}</td>
+          <td class="p-2 text-xs">{% if r.patch and r.patch.commit %}<span class="text-emerald-300">{{ r.patch.branch }}</span>{% if r.patch.pr and r.patch.pr.ok %} · <a class="underline" href="{{ r.patch.pr.url }}" target="_blank">PR</a>{% endif %}{% elif r.patch and r.patch.status == 'failed' %}<span class="text-rose-400">failed</span>{% elif patch_jobs.get(r.fingerprint) and patch_jobs[r.fingerprint].status == 'running' %}<span class="text-sky-300">patching…</span>{% else %}<span class="text-slate-600">—</span>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="p-8 text-center text-slate-500">No findings match. Start a Fianto run from the Configure page.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+const boxes = [...document.querySelectorAll('.sel')];
+const count = () => document.getElementById('sel-count').textContent = boxes.filter(b => b.checked).length;
+boxes.forEach(b => b.onchange = count);
+document.getElementById('sel-all').onchange = e => { boxes.forEach(b => b.checked = e.target.checked); count(); };
+</script>
+{% endblock %}

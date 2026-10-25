@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Settings · {{ app_name }}{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold">Models & Providers</h1>
+<p class="text-slate-400 text-sm mb-4">Register model sources, pick models from each, and assign one per pipeline stage. Keys are stored locally in <span class="mono">data/settings.json</span> (git-ignored) and never shown again in full.</p>
+{% if msg %}<div class="mb-4 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">{{ msg }}</div>{% endif %}
+{% if err %}<div class="mb-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">{{ err }}</div>{% endif %}
+
+<!-- Stage assignment -->
+<section class="rounded-xl border border-slate-800 bg-slate-900/50 p-4 mb-6">
+  <h2 class="font-semibold mb-3">Stage assignment <span class="text-xs text-slate-500 font-normal">(defaults for new runs; the launch page can override per run)</span></h2>
+  <form method="post" action="/settings/stages" class="grid md:grid-cols-2 gap-3">
+    {% for st, desc in stages.items() %}
+    <label class="text-sm"><span class="text-slate-300">{{ desc }}</span>
+      <select name="{{ st }}" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5">
+        {% for m in settings.models if m.enabled %}<option value="{{ m.key }}" {% if settings.stages[st] == m.key %}selected{% endif %}>{{ m.label }} — {{ m.model }} ({{ m.provider }})</option>{% endfor %}
+      </select></label>
+    {% endfor %}
+    <div class="md:col-span-2"><button class="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Save assignment</button>
+      <span class="ml-3 text-xs text-slate-500">Tip: put the most capable model (Fable 5.1, or Mythos once approved) on the verifier; keep agents on Opus/Sonnet for cost.</span></div>
+  </form>
+</section>
+
+<div class="grid lg:grid-cols-2 gap-6">
+<!-- Providers -->
+<section class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+  <h2 class="font-semibold mb-3">Providers</h2>
+  <ul class="space-y-3">
+    {% for p in settings.providers %}
+    <li class="rounded-lg border border-slate-800 p-3 text-sm">
+      <div class="flex items-center justify-between gap-2">
+        <div><span class="font-medium">{{ p.name }}</span> <span class="text-xs text-slate-500">{{ p.type }}</span></div>
+        <div class="flex gap-2">
+          <button type="button" data-pid="{{ p.id }}" class="discover rounded border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800">Discover models</button>
+          {% if p.id != 'anthropic-default' %}<form method="post" action="/settings/providers/{{ p.id }}/delete" onsubmit="return confirm('Remove provider and its models?')"><button class="rounded border border-rose-500/40 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/10">Remove</button></form>{% endif %}
+        </div>
+      </div>
+      <div class="mono text-[11px] text-slate-500 mt-1">id {{ p.id }}{% if p.base_url %} · {{ p.base_url }}{% endif %}{% if p.region %} · {{ p.region }}{% endif %}{% if p.project_id %} · {{ p.project_id }}{% endif %}</div>
+      {% if p.note %}<div class="text-xs text-slate-400 mt-1">{{ p.note }}</div>{% endif %}
+      <form method="post" action="/settings/providers/{{ p.id }}/key" class="mt-2 flex gap-2">
+        <input name="api_key" type="password" placeholder="{% if p.api_key_hint %}key set ({{ p.api_key_hint }}) — paste to replace{% else %}API key (optional for env/ADC auth){% endif %}" class="mono flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs">
+        <button class="rounded border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800">Save key</button>
+      </form>
+      <div id="disc-{{ p.id }}" class="hidden mt-2"></div>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <h3 class="font-semibold mt-5 mb-2 text-sm">Add a provider</h3>
+  <form method="post" action="/settings/providers" class="space-y-2 text-sm" id="add-provider">
+    <select name="type" id="ptype" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5">
+      {% for k, v in provider_types.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+    </select>
+    <input name="name" placeholder="Display name (e.g. OpenAI Daybreak, Bedrock us-east-1, Local Ollama)" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5">
+    <input name="api_key" type="password" placeholder="API key" class="mono w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5" data-for="anthropic openai_compatible anthropic_foundry">
+    <input name="base_url" placeholder="Base URL — e.g. https://api.openai.com/v1, https://openrouter.ai/api/v1, http://localhost:11434/v1" class="mono w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5" data-for="openai_compatible anthropic">
+    <input name="region" placeholder="Region (Bedrock: us-east-1 · Vertex: global)" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5" data-for="anthropic_bedrock anthropic_vertex">
+    <input name="project_id" placeholder="GCP project id" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5" data-for="anthropic_vertex">
+    <input name="resource" placeholder="Foundry resource name" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5" data-for="anthropic_foundry">
+    <input name="note" placeholder="Note (optional)" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5">
+    <button class="rounded-lg bg-slate-800 px-4 py-2 text-sm hover:bg-slate-700">Add provider</button>
+    <p class="text-xs text-slate-500">Bedrock uses AWS credentials from your environment; Vertex uses Application Default Credentials. OpenAI-compatible covers OpenAI (and Daybreak access), OpenRouter, Groq, Together, Ollama and vLLM.</p>
+  </form>
+</section>
+
+<!-- Models -->
+<section class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+  <h2 class="font-semibold mb-3">Model roster</h2>
+  <div class="space-y-2">
+    {% for m in settings.models %}
+    <form method="post" action="/settings/models/{{ m.key }}/update" class="rounded-lg border border-slate-800 p-3 text-sm {% if not m.enabled %}opacity-60{% endif %}">
+      <div class="flex items-center justify-between gap-2">
+        <div class="min-w-0"><input name="label" value="{{ m.label }}" class="bg-transparent font-medium w-full focus:outline-none focus:border-b border-slate-600"><div class="mono text-[11px] text-slate-500 truncate">{{ m.model }} · {{ m.provider }}</div></div>
+        <div class="flex items-center gap-1 shrink-0">
+          <button type="button" data-key="{{ m.key }}" class="test rounded border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800">Test</button>
+          <button class="rounded border border-emerald-500/40 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/10">Save</button>
+          <button type="submit" formaction="/settings/models/{{ m.key }}/delete" formnovalidate class="rounded border border-rose-500/40 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/10">✕</button>
+        </div>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+        <label>thinking <select name="thinking" class="rounded border border-slate-700 bg-slate-900 px-1 py-0.5"><option value="adaptive" {% if m.thinking == 'adaptive' %}selected{% endif %}>adaptive</option><option value="off" {% if m.thinking == 'off' %}selected{% endif %}>off</option></select></label>
+        <label>effort <select name="effort" class="rounded border border-slate-700 bg-slate-900 px-1 py-0.5"><option value="" {% if not m.effort %}selected{% endif %}>n/a</option>{% for e in ['low','medium','high','xhigh','max'] %}<option value="{{ e }}" {% if m.effort == e %}selected{% endif %}>{{ e }}</option>{% endfor %}</select></label>
+        <label>max_tokens <input name="max_tokens" value="{{ m.max_tokens }}" size="6" class="rounded border border-slate-700 bg-slate-900 px-1 py-0.5"></label>
+        <label class="flex items-center gap-1"><input type="checkbox" name="fallbacks" {% if m.fallbacks %}checked{% endif %} class="accent-emerald-500"> refusal fallback</label>
+        <label class="flex items-center gap-1"><input type="checkbox" name="enabled" {% if m.enabled %}checked{% endif %} class="accent-emerald-500"> enabled</label>
+      </div>
+      <div id="test-{{ m.key|replace('::','--') }}" class="mt-1 text-xs empty:hidden"></div>
+    </form>
+    {% endfor %}
+  </div>
+
+  <h3 class="font-semibold mt-5 mb-2 text-sm">Add a model manually</h3>
+  <form method="post" action="/settings/models" class="flex flex-wrap gap-2 text-sm">
+    <select name="provider" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5">{% for p in settings.providers %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select>
+    <input name="model_id" placeholder="model id, e.g. claude-fable-5-1 or gpt-5" class="mono flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5" required>
+    <input name="label" placeholder="label (optional)" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5">
+    <button class="rounded-lg bg-slate-800 px-4 py-1.5 hover:bg-slate-700">Add</button>
+  </form>
+  <p class="text-xs text-slate-500 mt-2">Claude 4.6+ models default to adaptive thinking; others start with thinking off. Refusal fallback is only valid on the Claude API for Opus 5.x / Sonnet 5.5 / Fable. If a run logs "bad request", toggle these here.</p>
+</section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// show only the fields relevant to the chosen provider type
+const ptype = document.getElementById('ptype');
+function syncFields(){ document.querySelectorAll('#add-provider [data-for]').forEach(el => el.classList.toggle('hidden', !el.dataset.for.split(' ').includes(ptype.value))); }
+ptype.onchange = syncFields; syncFields();
+
+document.querySelectorAll('.discover').forEach(b => b.onclick = async () => {
+  const pid = b.dataset.pid, box = document.getElementById('disc-' + pid);
+  box.classList.remove('hidden'); box.innerHTML = '<span class="text-xs text-slate-400">Querying provider…</span>';
+  const d = await (await fetch(`/settings/providers/${pid}/discover`)).json();
+  if (d.error) { box.innerHTML = `<span class="text-xs text-rose-300">${d.error}</span>`; return; }
+  if (!d.models.length) { box.innerHTML = '<span class="text-xs text-slate-400">No models returned.</span>'; return; }
+  box.innerHTML = `<form method="post" action="/settings/models" class="text-xs"><input type="hidden" name="provider" value="${pid}">
+    <div class="max-h-48 overflow-auto scrollbar-thin rounded border border-slate-800 p-2 grid sm:grid-cols-2 gap-1">
+    ${d.models.map(m => `<label class="flex items-center gap-1 truncate"><input type="checkbox" name="model_id" value="${m.id}" class="accent-emerald-500"><span class="mono truncate" title="${m.id}">${m.id}</span></label>`).join('')}</div>
+    <button class="mt-2 rounded bg-emerald-500 px-3 py-1 font-semibold text-slate-950">Add selected (${d.models.length} found)</button></form>`;
+});
+document.querySelectorAll('.test').forEach(b => b.onclick = async () => {
+  const key = b.dataset.key, box = document.getElementById('test-' + key.replace('::','--'));
+  box.className = 'mt-1 text-xs text-slate-400'; box.textContent = 'Testing…';
+  const d = await (await fetch(`/settings/models/${encodeURIComponent(key)}/test`, {method: 'POST'})).json();
+  box.className = 'mt-1 text-xs ' + (d.ok ? 'text-emerald-300' : 'text-rose-300'); box.textContent = (d.ok ? '✓ ' : '✕ ') + d.detail;
+});
+</script>
+{% endblock %}

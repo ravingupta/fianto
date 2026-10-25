@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ f.title }} · Finding{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>.hljs-addition{background:#064e3b55;color:#86efac}.hljs-deletion{background:#7f1d1d55;color:#fca5a5} pre{white-space:pre-wrap;word-break:break-word}</style>
+{% endblock %}
+{% block content %}
+{% set SEV = {'critical':'bg-rose-500/20 text-rose-300','high':'bg-orange-500/20 text-orange-300','medium':'bg-amber-500/20 text-amber-200','low':'bg-sky-500/20 text-sky-300','info':'bg-slate-700 text-slate-300'} %}
+<a href="/findings" class="text-xs text-slate-400 hover:text-slate-200">← Findings Board</a>
+{% if msg %}<div class="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">{{ msg }}</div>{% endif %}
+{% if err %}<div class="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">{{ err }}</div>{% endif %}
+<div class="mt-2 flex flex-wrap items-start justify-between gap-4">
+  <div class="min-w-0">
+    <div class="flex items-center gap-2"><span class="rounded px-2 py-0.5 text-xs font-semibold {{ SEV[f.severity] }}">{{ f.severity }}</span><span class="rounded bg-slate-800 px-2 py-0.5 text-xs">{{ f.status }}</span><span class="text-xs text-slate-500">{{ f.tool }} · {{ f.surface }} · conf {{ '%.0f'|format(f.confidence*100) }}%</span></div>
+    <h1 class="text-xl font-semibold mt-2">{{ f.title }}</h1>
+    <div class="mono text-xs text-slate-400 mt-1">{{ f.project }} · {{ f.location or f.file }} · fp {{ f.fingerprint }} · seen in {{ f.run_count }} run(s), last {{ f.last_run }}</div>
+  </div>
+  <form method="post" action="/findings/{{ f.fingerprint }}/status" class="flex items-center gap-2 text-sm">
+    <select name="status" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5">{% for s in statuses %}<option value="{{ s }}" {% if s == f.status %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+    <input name="note" placeholder="note" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 w-40">
+    <button class="rounded-lg bg-slate-800 px-3 py-1.5 hover:bg-slate-700">Set</button>
+  </form>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6 mt-6">
+  <div class="lg:col-span-2 space-y-5">
+    {% if f.exploit_path %}<section><h2 class="text-sm font-semibold text-slate-300 mb-1">Exploit path</h2><p class="text-sm text-slate-200 whitespace-pre-wrap">{{ f.exploit_path }}</p></section>{% endif %}
+    {% if f.detail and f.detail != f.exploit_path %}<section><h2 class="text-sm font-semibold text-slate-300 mb-1">Detail</h2><p class="text-sm text-slate-300 whitespace-pre-wrap">{{ f.detail }}</p></section>{% endif %}
+    {% if f.evidence %}<section><h2 class="text-sm font-semibold text-slate-300 mb-1">Evidence</h2><pre class="rounded-lg border border-slate-800 bg-black/60 p-3 text-xs"><code>{{ f.evidence }}</code></pre></section>{% endif %}
+    {% if f.patch_hint %}<section><h2 class="text-sm font-semibold text-slate-300 mb-1">Suggested fix</h2><p class="text-sm text-slate-300 whitespace-pre-wrap">{{ f.patch_hint }}</p></section>{% endif %}
+    {% if f.verification %}
+    <section class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+      <h2 class="text-sm font-semibold mb-1">Verifier verdict: <span class="{% if f.verification.verdict == 'confirmed' %}text-rose-300{% elif f.verification.verdict == 'false_positive' %}text-slate-400{% else %}text-amber-200{% endif %}">{{ f.verification.verdict }}</span> <span class="text-xs text-slate-500">({{ f.verification.model }})</span></h2>
+      <p class="text-sm text-slate-300 whitespace-pre-wrap">{{ f.verification.reasoning }}</p>
+    </section>
+    {% endif %}
+    <section class="rounded-xl border border-slate-800 bg-slate-900/50 p-4" id="patch-section">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="text-sm font-semibold">Patch</h2>
+        <div class="flex gap-2">
+          <form method="post" action="/findings/{{ f.fingerprint }}/patch"><button class="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-slate-950 hover:bg-emerald-400" {% if job and job.status == 'running' %}disabled{% endif %}>{% if f.patch and f.patch.commit %}Regenerate patch{% else %}Generate patch{% endif %}</button></form>
+          {% if f.patch and f.patch.commit %}<form method="post" action="/findings/{{ f.fingerprint }}/pr" onsubmit="return confirm('Push branch {{ f.patch.branch }} to origin and open a pull request?')"><button class="rounded-lg border border-slate-600 px-3 py-1.5 text-sm hover:bg-slate-800">{% if f.patch.pr and f.patch.pr.ok %}Update PR{% else %}Create PR{% endif %}</button></form>{% endif %}
+        </div>
+      </div>
+      {% if job and job.status == 'running' %}<div id="job-live" class="mt-3 text-xs text-sky-300">Patch agent running… this page refreshes when it finishes.</div>
+      <pre id="job-log" class="mono mt-2 max-h-48 overflow-auto text-[11px] text-slate-400">{% for e in job.log %}[{{ e.t }}] {{ e.msg }}
+{% endfor %}</pre>{% endif %}
+      {% if f.patch %}
+        {% if f.patch.commit %}
+          <div class="mt-3 text-sm text-slate-300">Branch <span class="mono text-emerald-300">{{ f.patch.branch }}</span> · commit <span class="mono">{{ f.patch.commit }}</span> · worktree <span class="mono text-xs text-slate-500">{{ f.patch.worktree }}</span></div>
+          {% if f.patch.pr and f.patch.pr.ok %}<div class="text-sm mt-1">PR: <a class="text-emerald-300 underline" href="{{ f.patch.pr.url }}" target="_blank">{{ f.patch.pr.url }}</a></div>{% endif %}
+          <div class="mt-3 text-sm text-slate-200 whitespace-pre-wrap">{{ f.patch.summary }}</div>
+          {% if f.patch.verification %}<div class="mt-2 text-xs text-slate-400"><b>Verification:</b> {{ f.patch.verification }}</div>{% endif %}
+          {% if f.patch.residual_risk %}<div class="mt-1 text-xs text-amber-200"><b>Residual risk:</b> {{ f.patch.residual_risk }}</div>{% endif %}
+          <pre class="mt-3 rounded-lg border border-slate-800 bg-black/60 p-3 text-xs overflow-auto max-h-[60vh]"><code class="language-diff">{{ f.patch.diff }}</code></pre>
+        {% elif f.patch.status == 'failed' %}<div class="mt-3 text-sm text-rose-300">Patch failed: {{ f.patch.error }}</div>
+        {% else %}<div class="mt-3 text-sm text-amber-200">Patch agent finished without committable changes.</div><div class="mt-2 text-sm text-slate-300 whitespace-pre-wrap">{{ f.patch.summary }}</div>{% endif %}
+      {% elif not job %}<p class="mt-2 text-xs text-slate-500">Generates a fix in an isolated git worktree on branch fianto/{{ f.fingerprint[:8] }}; your checkout is not modified.</p>{% endif %}
+    </section>
+  </div>
+  <aside class="space-y-4">
+    <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4 text-sm">
+      <h2 class="font-semibold mb-2">Where</h2>
+      <div class="mono text-xs text-slate-400 break-all">{{ f.project_path }}</div>
+      <div class="mono text-xs text-slate-300 mt-1 break-all">{{ f.location or f.file }}</div>
+      {% if f.package %}<div class="text-xs text-slate-400 mt-1">package: <span class="mono">{{ f.package }}</span></div>{% endif %}
+      {% if f.rule %}<div class="text-xs text-slate-400 mt-1">rule: <span class="mono">{{ f.rule }}</span></div>{% endif %}
+      {% if f.note %}<div class="text-xs text-amber-200 mt-2">note: {{ f.note }}</div>{% endif %}
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4 text-sm">
+      <h2 class="font-semibold mb-2">History</h2>
+      <ul class="space-y-1 text-xs text-slate-400">{% for h in f.history %}<li><span class="mono text-slate-500">{{ h.ts[5:16] }}</span> {{ h.event }} <span class="text-slate-500">{{ h.detail[:80] }}</span></li>{% endfor %}</ul>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('pre code').forEach(c => hljs.highlightElement(c));
+{% if job and job.status == 'running' %}
+(async function poll(){
+  const r = await fetch('/findings/{{ f.fingerprint }}/patch/status'); const d = await r.json();
+  if (d.job && d.job.status === 'running') { document.getElementById('job-log').textContent = d.job.log.map(e => `[${e.t}] ${e.msg}`).join('\n'); setTimeout(poll, 2000); }
+  else location.href = '/findings/{{ f.fingerprint }}';
+})();
+{% endif %}
+</script>
+{% endblock %}
